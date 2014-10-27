@@ -12,23 +12,25 @@ import org.dom4j.Document;
 import org.dom4j.Element;
 import org.dom4j.io.SAXReader;
 
-import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.StringReader;
 import java.io.UnsupportedEncodingException;
 import java.security.NoSuchAlgorithmException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.zip.GZIPOutputStream;
 
 public class WeatherGetApi {
     protected final static BaeCache baeCache = BaeFactory.getBaeCache("FZzCFfhRdpNDYXjlBgmN", "cache.duapp.com:20243", "qAxBy94hvbgsQ5bZLUsS0dLM", "A3z1f1fgqKGQTItfrRyd2Ieqcs16S1SA");
     protected final static int timeout = 55 * 60000;
 
 
-    public static String getWeather(String city) {
+    public static byte[] getWeather(String city) {
 
 
-        String s = getNow_by_CACHE(city);
+        byte[] s = getNow_by_CACHE(city);
         if (s == null) {
             if (!GetSafe.isSafe(city)) {
                 return null;
@@ -43,9 +45,9 @@ public class WeatherGetApi {
     /**
      * 错误返回null
      */
-    private final static String getNow_by_CACHE(String key) {
+    private final static byte[] getNow_by_CACHE(String key) {
         String lockey = key;
-        String s = memMap.get(lockey);
+        byte[] s = memMap.get(lockey);
         long now = System.currentTimeMillis();
         if (s != null) {
             if (now < memMap_Time.get(lockey)) {
@@ -55,7 +57,7 @@ public class WeatherGetApi {
                 return null;
             }
         } else {
-            s = (String) baeCache.get(lockey);
+            s = (byte[]) baeCache.get(lockey);
             if (s != null) {
                 putMem(key, s, timeout / 2);
                 System.out.println("through baecache");
@@ -69,7 +71,7 @@ public class WeatherGetApi {
     /**
      * 错误时返回null。
      */
-    private final static String getNow_by_INTERNET(String city) {
+    public final static byte[] getNow_by_INTERNET(String city) {
         JsonObject jsonObject = new JsonObject();
         try {
             OkHttpClient client = new OkHttpClient();
@@ -77,36 +79,58 @@ public class WeatherGetApi {
             client.setConnectTimeout(3, TimeUnit.SECONDS);
 
             Request request = new Request.Builder()
-                    .url("http://wthrcdn.etouch.cn/WeatherApi?citykey=101" + city)
+                    .url("http://wthrcdn.etouch.cn/WeatherApi?citykey=101010100")
                     .build();
 
             Response response = client.newCall(request).execute();
 
+            String result = response.body().string();
+
+
             SAXReader sr = new SAXReader();//获取读取xml的对象。
-            Document doc = sr.read(new ByteArrayInputStream(response.body().bytes()));
+
+            Document doc = sr.read(new StringReader(result));
             Element root = doc.getRootElement();//向外取数据，获取xml的根节点。
             now(jsonObject, root);
         } catch (Exception e) {
             e.printStackTrace();
         }
-        String s = jsonObject.toString();
-        if (!s.isEmpty()&&s.length()>20) {
+        byte[] s = gzip(jsonObject.toString());
+        if (s != null && s.length > 40) {
             //成功则加入缓存
             putMem(city, s, timeout);
             System.out.println("through internet");
-        }else{
+        } else {
             System.out.println("through internet error");
         }
         return s;
 
     }
 
+    public static byte[] gzip(String s) {
+        try {
+            System.out.println("haha:  " + s);
+            ByteArrayOutputStream bout = new ByteArrayOutputStream();
+            System.out.println("before com" + s.getBytes().length);
+            GZIPOutputStream gout = new GZIPOutputStream(bout);
+            gout.write(s.getBytes("utf-8"));
+            gout.flush();
+            gout.close();
+            final byte[] bytes = bout.toByteArray();
+            System.out.println("after com" + bytes.length);
+            return bytes;
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return null;
+    }
+
 
     //缓存部分
-    private final static Map<String, String> memMap = new HashMap<String, String>();
+    private final static Map<String, byte[]> memMap = new HashMap<String, byte[]>();
     private final static Map<String, Long> memMap_Time = new HashMap<String, Long>();
 
-    private final static void putMem(String key, String value, long timeout) {
+    private final static void putMem(String key, byte[] value, long timeout) {
         memMap.put(key, value);
         baeCache.set(key, value, timeout - 60000);
         memMap_Time.put(key, timeout + System.currentTimeMillis());
